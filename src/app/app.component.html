@@ -4,6 +4,9 @@
   (fileDropped)="onFileChange($event)"
   #canvasDom
 >
+  <button class="absolute top-2 right-2" (click)="createDSTModel()">
+    TEST
+  </button>
   <canvas #canvas></canvas>
   <input type="file" (change)="inputFileChange($event)" hidden #fileInput />
 </div>

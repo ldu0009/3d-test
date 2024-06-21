@@ -1,4 +1,4 @@
-import { GLTF, GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
@@ -9,6 +9,12 @@ const THREE_PATH = `https://unpkg.com/three@0.${REVISION}.x`;
 const KTX2_LOADER = new KTX2Loader(MANAGER);
 
 KTX2_LOADER.setTranscoderPath(`${THREE_PATH}/examples/js/libs/basis/`);
+
+export interface GltfData {
+    scene: any;
+    animations?: Array<any>
+    parts?: Array<any>
+}
 
 export class MyLoader {
 
@@ -32,8 +38,18 @@ export class MyLoader {
         const path = file.name.split('.').pop();
         return new Promise((resolve, reject) => {
             if (path === 'glb' || path === 'gltf') {
-                this.gltfLoader?.load(URL.createObjectURL(file), (gltf: GLTF) => {
-                    resolve(gltf);
+                this.gltfLoader?.load(URL.createObjectURL(file), (gltf: any) => {
+                    const gltfData: GltfData = {
+                        scene: gltf.scene,
+                        animations: gltf.animations,
+                        parts: []
+                    }
+                    gltf.scene.traverse((child) => {
+                        if (child.isMesh) {
+                            gltfData.parts.push(child);
+                        }
+                    });
+                    resolve(gltfData);
                 }, undefined, (error) => {
                     reject(error);
                 });

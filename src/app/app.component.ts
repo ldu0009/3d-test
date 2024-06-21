@@ -1,10 +1,16 @@
 import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, HostListener, OnDestroy, OnInit, ViewChild } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
-import { Box3, Color, PerspectiveCamera, PointLight, Raycaster, SRGBColorSpace, Scene, Sphere, Vector3, WebGLRenderer } from 'three/src/Three.js';
+import { Box3, BufferGeometry, Color, Float32BufferAttribute, Group, Line, LineBasicMaterial, LinearSRGBColorSpace, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, PerspectiveCamera, PlaneGeometry, PointLight, Raycaster, RepeatWrapping, SRGBColorSpace, Scene, Sphere, SphereGeometry, TextureLoader, Vector3, WebGLRenderer } from 'three/src/Three.js';
 import { MyCameraControls } from './common/camera-controls';
 import { MyLoader } from './common/threed-loader';
 import { DragAndDropDirective } from './directive/drag-and-drop.directive';
+import { DSTModel } from './common/DSTModel';
+import { Caster } from './common/caster';
+import { MeshBVH, acceleratedRaycast, computeBoundsTree, disposeBoundsTree, getTriangleHitPointInfo } from 'three-mesh-bvh'
 
+Mesh.prototype.raycast = acceleratedRaycast;
+BufferGeometry.prototype['computeBoundsTree'] = computeBoundsTree;
+BufferGeometry.prototype['disposeBoundsTree'] = disposeBoundsTree;
 @Component({
   selector: 'app-root',
   standalone: true,
@@ -17,13 +23,19 @@ export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('canvas') canvas: ElementRef<HTMLCanvasElement> | undefined;
 
   protected camera: PerspectiveCamera | undefined;
+  protected caster: Caster | undefined;
   protected controls: MyCameraControls | undefined;
   protected raycaster: Raycaster | undefined;
   protected renderer: WebGLRenderer | undefined;
   protected scene: Scene | undefined;
+  protected sticker: any
+
+  protected dstModel: DSTModel | undefined;
+  protected group: Group | undefined;
+
 
   private animationFrameId: number | undefined;
-
+  private textureLoader: TextureLoader = new TextureLoader();
   private loader: MyLoader = new MyLoader();
 
   constructor(private cd: ChangeDetectorRef) { }
@@ -44,7 +56,6 @@ export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
     this.createLight()
 
     this.renderScene();
-
     this.onResize();
   }
 
@@ -77,8 +88,7 @@ export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
     this.loader.load(file).then((data: any) => {
 
       if (!this.scene || !data.scene) return;
-      this.scene.add(data.scene);
-      this.setMaterial(data.scene);
+      this.group.add(data.scene);
 
       if (!this.camera) return;
       this.camera.lookAt(data.scene.position)
@@ -96,6 +106,7 @@ export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
         if (!this.controls) return;
         this.controls.fitToBox(data.scene, true, { paddingTop: maxDim / 5, paddingBottom: maxDim / 5, paddingLeft: maxDim / 5, paddingRight: maxDim / 5 });
       })
+
     })
   }
 
@@ -107,6 +118,11 @@ export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
    */
   private createScene(): void {
     this.scene = new Scene();
+    this.group = new Group();
+    this.sticker = new Group();
+
+    this.scene.add(this.group);
+    this.scene.add(this.sticker);
   }
 
   /**
@@ -117,6 +133,10 @@ export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
 
     this.renderer = new WebGLRenderer({
       canvas: this.canvas.nativeElement,
+      antialias: true,
+      alpha: true,
+      preserveDrawingBuffer: true,
+      depth: true,
     });
 
     this.renderer.outputColorSpace = SRGBColorSpace;
@@ -136,6 +156,8 @@ export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
     this.camera.position.set(0, 0, 1)
 
     if (!this.scene) return;
+
+    this.caster = new Caster();
     this.scene.add(this.camera)
   }
 
@@ -150,32 +172,32 @@ export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
   private createLight(): void {
     if (!this.scene) return;
 
-    const light = new PointLight(0xffffff, 200, 100)
+    const light = new PointLight(0xffffff, 1000, 100)
     light.position.set(0, 0, 20)
 
     this.scene.add(light)
 
-    const light2 = new PointLight(0xffffff, 200, 100)
+    const light2 = new PointLight(0xffffff, 1000, 100)
     light2.position.set(0, 0, -20)
 
     this.scene.add(light2)
 
-    const light3 = new PointLight(0xffffff, 200, 100)
+    const light3 = new PointLight(0xffffff, 1000, 100)
     light3.position.set(0, 20, 0)
 
     this.scene.add(light3)
 
-    const light4 = new PointLight(0xffffff, 200, 100)
+    const light4 = new PointLight(0xffffff, 1000, 100)
     light4.position.set(0, -20, 0)
 
     this.scene.add(light4)
 
-    const light5 = new PointLight(0xffffff, 200, 100)
+    const light5 = new PointLight(0xffffff, 1000, 100)
     light5.position.set(20, 0, 0)
 
     this.scene.add(light5)
 
-    const light6 = new PointLight(0xffffff, 200, 100)
+    const light6 = new PointLight(0xffffff, 1000, 100)
     light6.position.set(-20, 0, 0)
 
     this.scene.add(light6)
@@ -183,11 +205,10 @@ export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
 
   private setMaterial(scene: any): void {
     scene.traverse((node: any) => {
-      node.renderOrder = 1000;
+      node.renderOrder = 1;
       node.frustumCulled = false;
 
       let mesh: any = node;
-
       mesh.castShadow = true;
       mesh.receiveShadow = true;
 
@@ -242,7 +263,7 @@ export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
-  private resizeRendererToDisplaySize() {
+  private resizeRendererToDisplaySize(): any {
     if (!this.renderer || !this.canvasDom) return;
 
     const canvas = this.renderer.domElement;
@@ -251,6 +272,7 @@ export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
     const needResize = canvas.width !== width || canvas.height !== height;
     if (needResize) {
       this.renderer.setSize(width, height, false);
+      this.caster.setSize(width, height)
     }
     return needResize;
   }
@@ -265,6 +287,121 @@ export class AppComponent implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
+  @HostListener('mousemove', ['$event']) onMouseMove(e: MouseEvent) {
+    this.caster.setMouse(e)
+    this.caster.setFromCamera(this.camera)
+    this.caster.check(this.group)
 
+    if (this.caster.isIntersect && this.sticker.children.length > 0) {
+      this.sticker.position.copy(this.caster.point)
+      this.sticker.lookAt(this.caster.normal);
+    }
+  }
+
+  @HostListener('mousedown', ['$event']) onMouseDown(e: MouseEvent) {
+    this.caster.setMouse(e)
+    this.caster.setFromCamera(this.camera)
+    this.caster.check(this.group)
+
+    if (this.caster.intersects.length > 0) {
+
+      const geometry = new PlaneGeometry(0.4, 0.4, 20, 20);
+      const material = new MeshStandardMaterial({ color: 0x00ff00, side: 2 });
+      const mesh = new Mesh(geometry, material);
+      mesh.position.copy(this.caster.point)
+      mesh.lookAt(this.caster.normal)
+      const bvh = new MeshBVH(this.caster.intersects[0].object['geometry']);
+
+      console.log(geometry.attributes)
+
+      for (let i = 0; i < geometry.attributes['position'].array.length; i += 3) {
+        const vector = new Vector3(geometry.attributes['position'].array[i], geometry.attributes['position'].array[i + 1], geometry.attributes['position'].array[i + 2]);
+        vector.applyMatrix4(mesh.matrixWorld);
+        const data1 = bvh.closestPointToPoint(vector, { point: new Vector3(), faceIndex: 0, distance: 0 })
+
+        const g = new SphereGeometry(0.01, 20, 20);
+        const m = new MeshBasicMaterial({ color: 0xff0000 });
+        const s = new Mesh(g, m);
+
+        s.position.copy(vector)
+
+        const data2 = getTriangleHitPointInfo(vector, this.caster.intersects[0].object['geometry'], data1.faceIndex)
+        console.log(data2)
+        geometry.attributes['position'].array[i] = data1.point.x
+        geometry.attributes['position'].array[i + 1] = data1.point.y
+        geometry.attributes['position'].array[i + 2] = data1.point.z
+      }
+
+
+      this.scene?.add(mesh)
+    }
+  }
+
+  // -----------------------------------------------------------------------------------------------------
+  // @ Test
+  // -----------------------------------------------------------------------------------------------------
+
+  public createDSTModel(): void {
+    this.textureLoader.load("./assets/threadNormal.png", (normalMap) => {
+      const textureLoader = new TextureLoader();
+      textureLoader.load("./assets/threadTexture.jpg", (texture) => {
+        texture.colorSpace = SRGBColorSpace;
+        texture.wrapS = texture.wrapT = RepeatWrapping;
+        normalMap.wrapS = normalMap.wrapT = RepeatWrapping;
+        normalMap.colorSpace = LinearSRGBColorSpace;
+
+        this.dstModel = new DSTModel(this.sticker, texture, normalMap);
+
+        // this.dstModel.loadDST("./assets/Sample5/WOLFHD7.dst",
+        //   (lines: any) => {
+        //     lines.mesh.position.x -= 6;
+        //   },
+        //   {
+        //     threadThickness: 2.7,
+        //     jumpThreadThickness: 0,
+        //     palette: ["white", "lightgray", "darkgray", "black", "white"],
+        //   }
+        // )
+
+        this.dstModel.loadDST(
+          "./assets/Sample2/CAT2.dst",
+          (lines: any) => {
+            this.sticker.add(lines.mesh);
+            lines.mesh.material.map = texture;
+            lines.mesh.material.normalMap = normalMap;
+          },
+          {
+            threadThickness: 2.7,
+            jumpThreadThickness: 0,
+            palette: ["orange", "white", "pink", "white", "black"],
+          }
+        );
+
+        // this.dstModel.loadDST(
+        //   "./assets/Sample3/ELECTRNCSJK14.dst",
+        //   (lines: any) => { },
+        //   {
+        //     threadThickness: 2.7,
+        //     jumpThreadThickness: 0,
+        //     palette: [
+        //       "white",
+        //       "white",
+        //       "white",
+        //       "gray",
+        //       "brown",
+        //       "white",
+        //       "blue",
+        //       "pink",
+        //       "brown",
+        //       "teal",
+        //       "white",
+        //       "black",
+        //       "white",
+        //     ],
+        //     //palette:[],
+        //   })
+      })
+    })
+  }
 
 }

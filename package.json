@@ -21,6 +21,7 @@
     "camera-controls": "^2.8.5",
     "rxjs": "~7.8.0",
     "three": "^0.165.0",
+    "three-mesh-bvh": "^0.7.5",
     "tslib": "^2.3.0",
     "zone.js": "~0.14.3"
   },
